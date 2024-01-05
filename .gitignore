@@ -1,0 +1,6 @@
+.idea/
+.vscode/
+library/
+**/__pycache__
+data/visualisation/*.json
+data/.cache/*.json

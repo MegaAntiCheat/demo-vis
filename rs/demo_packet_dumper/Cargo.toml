@@ -1,0 +1,12 @@
+[package]
+name = "demo_packet_dumper"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitbuffer = "0.10.9"
+serde = "1.0.193"
+serde_json = "1.0.108"
+tf-demo-parser = {git = "https://github.com/MegaAntiCheat/parser"}
