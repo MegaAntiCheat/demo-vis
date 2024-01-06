@@ -12,7 +12,7 @@ from typing import Any
 class DataCollectorV2:
     """
     DataCollectorV2 is the cleaner implementation of several functions inside the older `Sequencer` class.
-    The purpose of this class to collect information mapped in the demo so we can use it later for translating
+    The purpose of this class to collect information mapped in the demo, so we can use it later for translating
     things like identifier constants, server_class numbers, and datatable references.
     """
     demo_json_raw: dict = None
@@ -46,7 +46,7 @@ class DataCollectorV2:
         :param current_tick: the current tick value from the parent packet containing the PacketEntities and CTFPlayer
                              messages
         :return: None if no PlayerEphemeralConsts object for that slot ID exists (yet), or a valid PlayerEphemeralConsts
-                 object (may not have a m_iUserID or m_iAccountID, but will have their identifiers mapped)
+                 object (may not have an m_iUserID or m_iAccountID, but will have their identifiers mapped)
         """
         _greatest_smaller = None
         for tick in self.slot_details_by_tick_range[entity_idx]:
@@ -184,7 +184,7 @@ class DataCollectorV2:
 
                         # we have a userID or accountID property match
                         # check if we have previously copied a PlayerEphemeralConsts object for this tick, else
-                        # create one by deepcopying the base
+                        # create one by deep copying the base
                         _details_base: PlayerEphemeralConsts
                         if tick_num in self.slot_details_by_tick_range[_slot_id]:
                             _details_base = self.slot_details_by_tick_range[_slot_id][tick_num]
@@ -211,7 +211,7 @@ class ExtractorV2:
     data_collection: DataCollectorV2 = None
 
     _relevant_dts: list[str] = None
-    _player_prop_changes: dict[int, dict[str | SteamID, dict]]
+    _player_prop_changes: dict[str, dict[str, dict]]
 
     def _analyse_packet_entities(self, tick_num: int, message: dict) -> None:
         """
@@ -243,6 +243,7 @@ class ExtractorV2:
         :return: None
         """
         entity: dict[str, Any]
+        _cnt = len(message['entities'])
         for entity in message['entities']:
             if not self.data_collection.server_classes.is_id_named(entity['server_class'], UsefulServerClasses.Player):
                 continue
@@ -295,10 +296,13 @@ class ExtractorV2:
                     logger.error(f"Unknown or unseen identifier '{prop['identifier']}', skipping...")
                     continue
 
-            self._player_prop_changes[tick_num][str(steam_id)] = changes
+            self._player_prop_changes[tick_num][steam_id.steam_id_64] = changes
 
     def _extract_packets(self) -> None:
+        logger.info(f"[V2] Extracting messages and game data...")
+
         packet: dict[str, Any]
+        _cnt = len(self.demo_json_raw)
         for packet in self.demo_json_raw:
             if packet['type'] != "Message":
                 continue
@@ -306,7 +310,7 @@ class ExtractorV2:
             tick_num: int = int(packet['tick'])
             self._player_prop_changes[tick_num] = {}
             # Maybe we would like to include this in the dump at some point.
-            local_player: dict = packet['meta']['view_angles'] #
+            local_player: dict = packet['meta']['view_angles']
 
             message: dict[str, Any]
             for message in packet['messages']:
@@ -315,6 +319,7 @@ class ExtractorV2:
                 # and will return nothing.
                 if message['type'] == 'PacketEntities':
                     self._analyse_packet_entities(tick_num, message)
+        logger.success(f"[V2] Processed {_cnt} packets...")
 
     def __init__(
             self,
@@ -334,8 +339,15 @@ class ExtractorV2:
 
         self._extract_packets()
 
-    def get_changes(self) -> dict[int, dict[str | SteamID, dict]]:
+    def get_changes(self) -> dict[str, dict[str, dict]]:
         return self._player_prop_changes
+
+
+def default_serialisation(obj):
+    if isinstance(obj, PlayerEphemeralConsts):
+        return obj.get_dict()
+    else:
+        return str(obj)
 
 
 def test_v2():
@@ -344,8 +356,13 @@ def test_v2():
 
     :return: None, writes file out to hardcoded file path
     """
-    _v2 = ExtractorV2(Path("data/demo_trace_2.json").read_text('utf8'))
+    logger.info(f"[V2][TEST] Reading demo JSON...")
+    _v2 = ExtractorV2(Path("data/noadd-demo_trace.json").read_text('utf8'))
     _changes = _v2.get_changes()
+    logger.info(f"[V2][TEST] Writing out data...")
 
-    with open('data/test_v2_2.json', 'w') as h:
+    with open('data/test_v2_big_all.json', 'w') as h:
         h.write(json.dumps(_changes, indent=2))
+
+    with open('data/test_v2_big_players.json', 'w') as h:
+        h.write(json.dumps(_v2.data_collection.slot_details_by_tick_range, indent=2, default=default_serialisation))

@@ -159,6 +159,15 @@ class PlayerEphemeralConsts:
     def __str__(self):
         return self.__repr__()
 
+    def get_dict(self) -> dict:
+        return {
+            'arr_idx_name': self.arr_idx_name,
+            'm_iUserID': self.m_iUserID if self.m_iUserID else 'null',
+            'm_iAccountID': self.m_iAccountID if self.m_iAccountID else 'null',
+            'm_iUserID_identifier': self.m_iUserID_identifier,
+            'm_iAccountID_identifier': self.m_iAccountID_identifier
+        }
+
     def __repr__(self) -> str:
         _ain = self.arr_idx_name
         _uid = self.m_iUserID if self.m_iUserID else 'null'

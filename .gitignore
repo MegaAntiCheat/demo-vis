@@ -4,3 +4,8 @@ library/
 **/__pycache__
 data/visualisation/*.json
 data/.cache/*.json
+data/noadd-*.json
+rs/demo_packet_dumper/*.dem
+data/noadd-demo_trace.json
+data/test*.json
+**/macclient.log
