@@ -38,6 +38,16 @@ class DataCollectorV2:
         self._get_mapped_accounts_by_time_period()
 
     def get_player_consts(self, entity_idx: int, current_tick: int) -> PlayerEphemeralConsts | None:
+        """
+        Get a PlayerEphemeralConsts object referencing a given slot id by searching for a PlayerEphemeralConsts
+        most recently constructed before the current tick
+
+        :param entity_idx: the entity idx (as per the PacketEntities/CTFPlayer class packet) aka the slot id
+        :param current_tick: the current tick value from the parent packet containing the PacketEntities and CTFPlayer
+                             messages
+        :return: None if no PlayerEphemeralConsts object for that slot ID exists (yet), or a valid PlayerEphemeralConsts
+                 object (may not have a m_iUserID or m_iAccountID, but will have their identifiers mapped)
+        """
         _greatest_smaller = None
         for tick in self.slot_details_by_tick_range[entity_idx]:
             if tick <= current_tick:
@@ -51,10 +61,14 @@ class DataCollectorV2:
 
     def _extract_identifier_names(self) -> None:
         logger.info("[V2] Extracting identifier names and relationships...")
+        # Interspersed amongst the demo packets will be a DataTables packet type, which
+        # contains detail on all the data tables used or referenced in this demo
         for packet in self.demo_json_raw:
             if packet['type'] != 'DataTables':
                 continue
 
+            # The tables list contains data tables, their names and identifiers, and the names
+            # and identifiers of all their child elements
             for table in packet['tables']:
                 self.data_tables.append(table['name'])
                 for prop in table['props']:
@@ -67,6 +81,8 @@ class DataCollectorV2:
                     }
                     self.mapped_identifiers |= _kv
 
+            # Some DataTables packets will also contain a server_classes definition table,
+            # which maps server_class names to an integer ID and their associated DataTable
             if 'server_classes' in packet:
                 for sc in packet['server_classes']:
                     # server_class like:
