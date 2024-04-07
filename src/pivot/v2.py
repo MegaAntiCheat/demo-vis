@@ -163,7 +163,7 @@ class DataCollectorV2:
                 for entity in message['entities']:
                     if not self.server_classes.is_id_named(
                             entity['server_class'],
-                            UsefulServerClasses.PlayerResource
+                            UsefulServerClasses.TFPlayerResource
                     ):
                         continue
 
@@ -211,6 +211,7 @@ class ExtractorV2:
     data_collection: DataCollectorV2 = None
 
     _relevant_dts: list[str] = None
+    _relevant_scs: list[str] = None
     _player_prop_changes: dict[str, dict[str, dict]]
 
     def _analyse_packet_entities(self, tick_num: int, message: dict) -> None:
@@ -245,8 +246,10 @@ class ExtractorV2:
         entity: dict[str, Any]
         _cnt = len(message['entities'])
         for entity in message['entities']:
-            if not self.data_collection.server_classes.is_id_named(entity['server_class'], UsefulServerClasses.Player):
+            if self.data_collection.server_classes.id_to_name(entity['server_class']) not in self._relevant_scs:
                 continue
+            # if not self.data_collection.server_classes.is_id_named(entity['server_class'], UsefulServerClasses.TFPlayer):
+            #     continue
 
             entity_idx: int = entity['entity_index']
             player = self.data_collection.get_player_consts(entity_idx, tick_num)
@@ -296,7 +299,7 @@ class ExtractorV2:
                     logger.error(f"Unknown or unseen identifier '{prop['identifier']}', skipping...")
                     continue
 
-            self._player_prop_changes[tick_num][steam_id.steam_id_64] = changes
+            self._player_prop_changes[str(tick_num)][str(steam_id.steam_id_64)] = changes
 
     def _extract_packets(self) -> None:
         logger.info(f"[V2] Extracting messages and game data...")
@@ -308,7 +311,7 @@ class ExtractorV2:
                 continue
 
             tick_num: int = int(packet['tick'])
-            self._player_prop_changes[tick_num] = {}
+            self._player_prop_changes[str(tick_num)] = {}
             # Maybe we would like to include this in the dump at some point.
             local_player: dict = packet['meta']['view_angles']
 
@@ -336,11 +339,24 @@ class ExtractorV2:
         self.demo_json_raw = self.data_collection.demo_json_raw
         self._player_prop_changes = {}
         self._relevant_dts = [x.value for x in UsefulDataTables]
+        self._relevant_scs = [x.value for x in UsefulServerClasses]
 
         self._extract_packets()
 
     def get_changes(self) -> dict[str, dict[str, dict]]:
         return self._player_prop_changes
+
+    def get_classes(self) -> dict[str, ServerClass]:
+        _converted_dict = {}
+        for key in self.data_collection.server_classes.classes:
+            _converted_dict[str(key)] = self.data_collection.server_classes.classes[key]
+        return _converted_dict
+
+    def get_classes_flat(self) -> list[str]:
+        _class_strs: list[str] = []
+        for key in self.data_collection.server_classes.classes:
+            _class_strs.append(f"{self.data_collection.server_classes.classes[key]['name']} = {int(key)}")
+        return _class_strs
 
 
 def default_serialisation(obj):
@@ -366,3 +382,9 @@ def test_v2():
 
     with open('data/test_v2_big_players.json', 'w') as h:
         h.write(json.dumps(_v2.data_collection.slot_details_by_tick_range, indent=2, default=default_serialisation))
+
+    with open('data/test_v2_server_classes.json', 'wb') as h:
+        h.write(orjson.dumps(_v2.get_classes()))
+
+    with open('data/flat_server_classes.json', 'wb') as h:
+        h.write("\n".join(_v2.get_classes_flat()).encode('utf8'))

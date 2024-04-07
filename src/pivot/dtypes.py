@@ -7,21 +7,37 @@ from typing import Any
 
 
 class UsefulServerClasses(Enum):
-    Player = "CTFPlayer"
-    PlayerResource = "CTFPlayerResource"
+    BasePlayer = "CBasePlayer"
+    BaseProjectile = "CBaseProjectile"
+    BaseViewModel = "CBaseViewModel"
+    TFPlayer = "CTFPlayer"
+    TFPlayerResource = "CTFPlayerResource"
 
 
 class UsefulDataTables(Enum):
     Local = "DT_Local"
     LocalPlayer = "DT_LocalPlayerExclusive"
+    PlayerResource = "DT_PlayerResource"
+    PointCamera = "DT_PointCamera"
+    ViewModel = "DT_BaseViewModel"
+    BaseProjectile = "DT_TFBaseProjectile"
+    BaseRocket = "DT_TFBaseRocket"
+    Cannon = "DT_TFCannon"
+    GenericBomb = "DT_TFGenericBomb"
+    ProjectilePipe = "DT_TFProjectile_Pipebomb"
+    ProjectileArrow = "DT_TFProjectile_Arrow"
+    ProjectileFlare = "DT_TFProjectile_Flare"
+    ProjectileRocket = "DT_TFProjectile_Rocket"
     TFLocalPlayer = "DT_TFLocalPlayerExclusive"
     BaseEntity = "DT_BaseEntity"
     PlayerState = "DT_PlayerState"
     PlayerClass = "DT_TFPlayerClassShared"
     TFPlayerState = "DT_TFPlayerShared"
+    TFPlayerSharedLocal = "DT_TFPlayerSharedLocal"
     AmmoValues = "m_iAmmo"
     PlayerScoring = "DT_TFPlayerScoringDataExclusive"
     TFPlayer = "DT_TFPlayer"
+    TFPlayerResource = "DT_TFPlayerResource"
     BasePlayer = "DT_BasePlayer"
 
 
@@ -235,6 +251,12 @@ class ServerClasses(metaclass=Singleton):
 
     def add_class(self, server_class: ServerClass) -> None:
         self.classes[server_class.server_class] = server_class
+
+    def id_to_name(self, class_id: int) -> str | None:
+        try:
+            return self.classes[class_id].name
+        except KeyError:
+            return None
 
     def is_id_named(self, class_id: int, class_name: str | Enum) -> bool:
         if isinstance(class_name, Enum):
