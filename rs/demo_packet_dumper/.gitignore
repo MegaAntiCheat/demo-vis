@@ -3,4 +3,4 @@
 .vscode
 *.log
 *.dem
-output/
+output*
