@@ -3,11 +3,16 @@ import json
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from typing import Any
+from typing import Any, BinaryIO, cast
 from enum import Enum
 from pathlib import Path
+
+import msgpack
 from loguru import logger
 from tqdm import tqdm
+
+from src.gsd.player import Player
+from src.gsd.load import unpack_generator
 from src.pivot.v2 import ExtractorV2
 
 
@@ -21,148 +26,54 @@ class PlaybackConsts(Enum):
 class PlayerMovement:
     # SteamID64
     target_player: str = None
-    time_series: dict[str, dict[str, dict[str, Any]]]
-    # Warning, this array may be 10s to hundreds of thousands of elements long
-    positions_by_tick: list[tuple[float, float, float] | None] = None
-    every_other_player: dict[str, list[tuple[float, float, float] | None]] = None
-    # For visualisations
-    _last_xyz: tuple[float, float, float] = None
-    _fig: plt.Figure = None
-    _point: plt.Line2D = None
-    _other_points: dict[str, plt.Line2D] = None
-    _range_x: tuple[float, float] = None
-    _range_y: tuple[float, float] = None
-    _range_z: tuple[float, float] = None
+    unpacker: msgpack.Unpacker = None
+    unpacker_handle: BinaryIO = None
+    positions_by_tick: list[list[Player | None]] = None
 
-    def _update_ranges(self, pos_tuple: tuple[float, float, float]) -> None:
-        # Update X range
-        if pos_tuple[0] > self._range_x[1]:
-            self._range_x = (self._range_x[0], pos_tuple[0])
-        elif pos_tuple[0] < self._range_x[0]:
-            self._range_x = (pos_tuple[0], self._range_x[1])
-        # Update Y Range
-        if pos_tuple[1] > self._range_y[1]:
-            self._range_y = (self._range_y[0], pos_tuple[1])
-        elif pos_tuple[1] < self._range_y[0]:
-            self._range_y = (pos_tuple[1], self._range_y[1])
-        # Update Z Range
-        if pos_tuple[2] > self._range_z[1]:
-            self._range_z = (self._range_z[0], pos_tuple[2])
-        elif pos_tuple[2] < self._range_z[0]:
-            self._range_z = (pos_tuple[2], self._range_z[1])
+    # For visualisations
+    fig: plt.Figure = None
+    ax = None
+    _points: list[plt.Line2D] = None
 
     def __init__(
             self,
-            target_player: str,  # SteamID64 of the target player
-            time_series: dict[str, dict[str, dict[str, Any]]]
+            gsd_unpacker: msgpack.Unpacker,
+            gsd_file_handle: BinaryIO
     ) -> None:
-        self.time_series = time_series
-        self.target_player = target_player
+        self.unpacker = gsd_unpacker
+        self.unpacker_handle = gsd_file_handle
         self.positions_by_tick = []
-        self.every_other_player = {}
-        self._other_points = {}
-        self._last_xyz = (.0, .0, .0)
 
-        self._range_x = (.0, .0)
-        self._range_z = (.0, .0)
-        self._range_y = (.0, .0)
+        for idx, unpacked in tqdm(enumerate(self.unpacker)):
+            if idx == 0:
+                continue
+            _unpacked_players: list = cast(list, unpacked[0])
+            _tick: int = unpacked[1]
 
-        player: str
-        for player in self.time_series["0"]:
-            if player != self.target_player:
-                self.every_other_player[player] = []
+            _players_this_tick: list[Player | None] = [None] * len(_unpacked_players)
+            for player_slot, unpacked_player in enumerate(_unpacked_players):
+                _player_obj = Player.from_msgpack_list(unpacked_player, _tick)
+                _players_this_tick[player_slot] = _player_obj
 
-        _current_idx: int = 0
-        tick_num: str
-        for tick_num in tqdm(self.time_series):
-            _players: dict[str, dict[str, Any]] = self.time_series[tick_num]
-            _target = _players.get(self.target_player)
-
-            other: str
-            for other in self.every_other_player:
-                _other = _players.get(other)
-                if _other is None:
-                    self.every_other_player[other].append((-1000.0, -1000.0, -1000.0))
-                else:
-                    if 'DT_TFLocalPlayerExclusive' in _other:
-                        if 'm_vecOrigin' in _other['DT_TFLocalPlayerExclusive']:
-                            _pos_dict = _other['DT_TFLocalPlayerExclusive']['m_vecOrigin']
-                            if 'z' in _pos_dict:
-                                _z = _pos_dict['z']
-                            else:
-                                _z: float | None = None
-                                for elem in self.every_other_player[other][::-1]:
-                                    if elem is not None:
-                                        _z = elem[2]
-                                        break
-                                if _z is None:
-                                    _z = .0
-                            _pos_tuple = (_pos_dict['x'], _pos_dict['y'], _z)
-                            self.every_other_player[other].append(_pos_tuple)
-                            continue
-                    self.every_other_player[other].append((-1000.0, -1000.0, -1000.0))
-
-            if _target is not None:
-                if 'DT_TFLocalPlayerExclusive' in _target:
-                    if 'm_vecOrigin' in _target['DT_TFLocalPlayerExclusive']:
-                        _pos_dict = _target['DT_TFLocalPlayerExclusive']['m_vecOrigin']
-                        if 'z' in _pos_dict:
-                            _z = _pos_dict['z']
-                        else:
-                            _z: float | None= None
-                            for elem in self.positions_by_tick[::-1]:
-                                if elem is not None:
-                                    _z = elem[2]
-                                    break
-                            if _z is None:
-                                _z = .0
-                        _pos_tuple = (_pos_dict['x'], _pos_dict['y'], _z)
-                        # logger.debug(f"Player Movement[{tick_num}] -> {_pos_tuple}")
-                        self._update_ranges(_pos_tuple)
-                        self.positions_by_tick.append(_pos_tuple)
-                        continue
-                    elif 'm_vecOrigin[2]' in _target['DT_TFLocalPlayerExclusive']:
-                        try:
-                            _previous_xy = self.positions_by_tick[-1]
-                        except IndexError:
-                            # No previous position, but only a position update for one axis here?
-                            # Assume default and ECC later
-                            _previous_xy = (0, 0, 0)
-                        _pos_z = _target['DT_TFLocalPlayerExclusive']['m_vecOrigin[2]']
-                        self.positions_by_tick.append(
-                            (_previous_xy[0], _previous_xy[1], _pos_z)
-                        )
-                        continue
-
-                try:
-                    _prev = self.positions_by_tick[-1]
-                    self.positions_by_tick.append(_prev)
-                except IndexError:
-                    self.positions_by_tick.append(None)
-                finally:
-                    continue
-            else:
-                self.positions_by_tick.append(None)
+            self.positions_by_tick.append(_players_this_tick)
 
     def _frame(self, frame: int) -> Any:
-        _xyz = self.positions_by_tick[frame]
-        if _xyz is None:
-            _xyz = self._last_xyz
-        else:
-            self._last_xyz = _xyz
-        # if frame % 100 == 0:
-        #     logger.debug(f"[VISUALISING] New point: {_xyz}")
-        self._point.set_xdata(_xyz[0])
-        self._point.set_ydata(_xyz[1])
-        for other in self._other_points:
-            try:
-                _point = self.every_other_player[other][frame]
-            except IndexError:
-                _point = (-1000.0, -1000.0, -1000.0)
-            self._other_points[other].set_xdata(_point[0])
-            self._other_points[other].set_ydata(_point[1])
+        self.ax.clear()
+        _players = self.positions_by_tick[frame]
 
-        return self._point
+        for idx, _player in enumerate(_players):
+            if _player is None:
+                continue
+            if _player.position[0] == 0.0 and _player.position[1] == 0.0 and _player.position[2] == 0.0:
+                continue
+            self.ax.plot(
+                _player.position[0],
+                _player.position[1],
+                _player.position[2],
+                color='red' if _player.team.value == 2 else 'blue',
+                label=_player.name,
+                marker='o'
+            )
 
     def total_non_none_frames(self) -> int:
         _cnt: int = 0
@@ -181,33 +92,46 @@ class PlayerMovement:
         logger.info(f"Have {len(self.positions_by_tick)} frames to visualise, "
                     f"for {self.total_non_none_frames()} total valid positions")
 
-        self._fig = plt.figure()
-        plt.xlabel('X Coordinate')
-        plt.ylabel('Y Coordinate')
-        plt.xlim(self._range_x[0], self._range_x[1])
-        plt.ylim(self._range_y[0], self._range_y[1])
-        self._point = plt.plot(0.0, 0.0, 'ro', label=f'{self.target_player} XY position')[0]
-        for other in self.every_other_player:
-            self._other_points[other] = plt.plot(-1000.0, -1000.0, 'go')[0]
+        self.fig = plt.figure()
 
-        plt.legend()
+        self.ax = self.fig.add_subplot(projection='3d')
+        self.ax.set_xlabel('X Coordinate')
+        self.ax.set_ylabel('Y Coordinate')
+        self.ax.set_zlabel('Z Coordinate')
+        # self.ax.set_xlim(-2000, 2000)
+        # self.ax.set_ylim(-2000, 2000)
+        # self.ax.set_zlim(-1000, 1000)
+        # self.ax.legend()
+        self.fig.legend()
 
         ani = animation.FuncAnimation(
-            fig=self._fig,
+            fig=self.fig,
             func=self._frame,
             frames=len(self.positions_by_tick),
-            interval=1000/playback_rate
+            interval=1,
         )
         plt.show()
 
 
 def test_movement():
-    logger.info("[V2][VIS] Loading json...")
-    # _v2 = ExtractorV2(Path("data/noadd-demo_trace.json").read_text('utf8'))
-    with open('data/test_v2_big_all.json', 'r') as h:
-        _changes = json.load(h)
+    raise NotImplementedError
+    # logger.info("[V2][VIS] Loading json...")
+    # # _v2 = ExtractorV2(Path("data/noadd-demo_trace.json").read_text('utf8'))
+    # with open('data/test_v2_big_all.json', 'r') as h:
+    #     _changes = json.load(h)
+    #
+    # logger.info("[V2][VIS] Generating movement series...")
+    # _player = PlayerMovement("76561198071482715", _changes)
+    # logger.info("[V2][VIS] Visualising...")
+    # _player.visualise(PlaybackConsts.PLAYBACK_TICKRATE_100X.value)
 
-    logger.info("[V2][VIS] Generating movement series...")
-    _player = PlayerMovement("76561198071482715", _changes)
-    logger.info("[V2][VIS] Visualising...")
-    _player.visualise(PlaybackConsts.PLAYBACK_TICKRATE_100X.value)
+
+def test_with_gsd():
+    _file = Path('./rs/demo_packet_dumper/output2/jayce_is_very_pretty_2-gsd.msgpack')
+    _unpacker, _handle = unpack_generator(_file)
+    _inst = PlayerMovement(_unpacker, _handle)
+    _inst.visualise(PlaybackConsts.PLAYBACK_TICKRATE_100X.value)
+
+
+if __name__ == "__main__":
+    test_with_gsd()

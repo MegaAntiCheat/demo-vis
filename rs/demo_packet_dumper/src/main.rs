@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::{fmt::Write, fs::{self, File}, io::BufWriter, path::PathBuf, str::FromStr, time::Duration};
 use tf_demo_parser::demo::{
     header::Header,
-    parser::{gamestateanalyser::GameStateAnalyser, DemoHandler, RawPacketStream},
+    parser::{gamestateanalyser::{GameState, GameStateAnalyser}, DemoHandler, RawPacketStream},
 };
 use tf_demo_parser::Demo;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -112,7 +112,7 @@ fn main() -> Result<(), MainError> {
                 if !args.dont_parse_gamestate && handler.server_tick != current_tick {
                     bar.inc(1);
                     // print!("updating gamestate!!! 😂");
-                    let output = handler.borrow_output();
+                    let output: &GameState = handler.borrow_output();
                     output.serialize(&mut gsd_msgpack_serialiser).expect("Couldn't serialise game state delta");
                 }
                 current_tick = handler.server_tick.into();
